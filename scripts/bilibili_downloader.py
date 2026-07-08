@@ -85,6 +85,33 @@ def normalize_bilibili_url(url):
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
+def is_bilibili_audio_url(url):
+    parts = urlsplit(url)
+    return "bilibili.com" in parts.netloc.lower() and parts.path.lower().startswith("/audio/")
+
+
+def is_bilibili_audio_playlist_url(url):
+    parts = urlsplit(url)
+    return is_bilibili_audio_url(url) and parts.path.lower().startswith("/audio/am")
+
+
+def is_bilibili_audio_track_url(url):
+    parts = urlsplit(url)
+    return is_bilibili_audio_url(url) and parts.path.lower().startswith("/audio/au")
+
+
+def infer_media_type(url):
+    if is_bilibili_audio_url(url):
+        return "audio"
+    return "video"
+
+
+def resolve_media_type(requested_media, url):
+    if is_bilibili_audio_url(url):
+        return "audio"
+    return requested_media or infer_media_type(url)
+
+
 def current_episode_from_url(url):
     values = parse_qs(urlsplit(url).query).get("p", [])
     if not values or not values[0].isdigit():
@@ -93,6 +120,10 @@ def current_episode_from_url(url):
 
 
 def determine_download_plan(url, episode_selection, summary):
+    if is_bilibili_audio_playlist_url(url):
+        return url, parse_episode_selection(episode_selection or "all", summary.total_episodes)
+    if is_bilibili_audio_track_url(url):
+        return url, [1]
     if not episode_selection:
         return url, [current_episode_from_url(url)]
     normalized_url = normalize_bilibili_url(url)
@@ -100,6 +131,8 @@ def determine_download_plan(url, episode_selection, summary):
 
 
 def build_download_urls(url, summary, episodes):
+    if is_bilibili_audio_playlist_url(url):
+        return [url for _episode in episodes]
     if summary.total_episodes > 1:
         parts = urlsplit(url)
         if parts.query:
@@ -113,9 +146,11 @@ def build_download_items(url, summary, episodes):
     return list(zip(episodes, urls))
 
 
-def download_items(ydl, items):
+def download_items(ydl, items, total_episodes=None):
     result = DownloadResult(succeeded_episodes=[], failed_episodes=[])
     for episode, url in items:
+        if total_episodes and total_episodes > 1:
+            safe_print(f"Downloading playlist item {episode} of {total_episodes}")
         try:
             download_code = ydl.download([url])
         except Exception as exc:
@@ -128,6 +163,26 @@ def download_items(ydl, items):
         else:
             result.failed_episodes.append(episode)
             safe_print(f"Episode {episode} failed with exit code {download_code}", file=sys.stderr)
+    return result
+
+
+def download_playlist_items(ydl, url, episodes):
+    result = DownloadResult(succeeded_episodes=[], failed_episodes=[])
+    try:
+        download_code = ydl.download([url])
+    except Exception as exc:
+        result.failed_episodes.extend(episodes)
+        safe_print(f"Playlist items {','.join(str(episode) for episode in episodes)} failed: {exc}", file=sys.stderr)
+        return result
+
+    if download_code == 0:
+        result.succeeded_episodes.extend(episodes)
+    else:
+        result.failed_episodes.extend(episodes)
+        safe_print(
+            f"Playlist items {','.join(str(episode) for episode in episodes)} failed with exit code {download_code}",
+            file=sys.stderr,
+        )
     return result
 
 
@@ -167,18 +222,10 @@ def fetch_metadata(url):
         return ydl.extract_info(url, download=False)
 
 
-def download_audio(url, summary, episodes, output_dir):
-    try:
-        from yt_dlp import YoutubeDL
-    except ImportError as exc:
-        raise RuntimeError("yt-dlp is not installed. Run: python -m pip install -U yt-dlp") from exc
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    items = build_download_items(url, summary, episodes)
-
+def build_audio_options(output_dir, playlist_items=None):
     options = {
         "format": "bestaudio/best",
-        "noplaylist": True,
+        "noplaylist": playlist_items is None,
         "outtmpl": str(output_dir / "%(title).200B-%(id)s.%(ext)s"),
         "postprocessors": [
             {
@@ -188,19 +235,68 @@ def download_audio(url, summary, episodes, output_dir):
             }
         ],
     }
-    with YoutubeDL(options) as ydl:
-        return download_items(ydl, items)
+    if playlist_items is not None:
+        options["playlist_items"] = playlist_items
+    return options
+
+
+def build_video_options(output_dir):
+    return {
+        "format": "bv*+ba/best",
+        "merge_output_format": "mp4",
+        "noplaylist": True,
+        "outtmpl": str(output_dir / "%(title).200B-%(id)s.%(ext)s"),
+    }
+
+
+def download_audio(url, summary, episodes, output_dir):
+    try:
+        from yt_dlp import YoutubeDL
+    except ImportError as exc:
+        raise RuntimeError("yt-dlp is not installed. Run: python -m pip install -U yt-dlp") from exc
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    items = build_download_items(url, summary, episodes)
+
+    if is_bilibili_audio_playlist_url(url):
+        result = DownloadResult(succeeded_episodes=[], failed_episodes=[])
+        for episode, item_url in items:
+            with YoutubeDL(build_audio_options(output_dir, playlist_items=str(episode))) as ydl:
+                episode_result = download_items(
+                    ydl,
+                    [(episode, item_url)],
+                    total_episodes=summary.total_episodes,
+                )
+            result.succeeded_episodes.extend(episode_result.succeeded_episodes)
+            result.failed_episodes.extend(episode_result.failed_episodes)
+        return result
+
+    with YoutubeDL(build_audio_options(output_dir)) as ydl:
+        return download_items(ydl, items, total_episodes=summary.total_episodes)
+
+
+def download_video(url, summary, episodes, output_dir):
+    try:
+        from yt_dlp import YoutubeDL
+    except ImportError as exc:
+        raise RuntimeError("yt-dlp is not installed. Run: python -m pip install -U yt-dlp") from exc
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    items = build_download_items(url, summary, episodes)
+
+    with YoutubeDL(build_video_options(output_dir)) as ydl:
+        return download_items(ydl, items, total_episodes=summary.total_episodes)
 
 
 def create_parser():
     parser = argparse.ArgumentParser(
-        description="Download audio from a Bilibili video or multi-part playlist."
+        description="Download audio or video from a Bilibili video or multi-part playlist."
     )
     parser.add_argument(
         "-i",
         "--input",
         required=True,
-        help="Bilibili video URL.",
+        help="Bilibili URL.",
     )
     parser.add_argument(
         "-o",
@@ -218,8 +314,7 @@ def create_parser():
         "-m",
         "--media",
         choices=("audio", "video"),
-        default="audio",
-        help="Media type to download. Video is reserved as a TODO.",
+        help="Media type to download. Defaults to the type inferred from the input URL.",
     )
     return parser
 
@@ -227,10 +322,6 @@ def create_parser():
 def main(argv=None):
     parser = create_parser()
     args = parser.parse_args(argv)
-
-    if args.media == "video":
-        safe_print("Video download is TODO and not implemented yet.", file=sys.stderr)
-        return 2
 
     try:
         metadata_url = normalize_bilibili_url(args.input) if args.episodes else args.input
@@ -242,7 +333,20 @@ def main(argv=None):
         safe_print(f"Total episodes: {summary.total_episodes}")
         safe_print(f"Downloading episodes: {','.join(str(episode) for episode in episodes)}")
         safe_print(f"Output directory: {args.output}")
-        result = download_audio(download_url, summary, episodes, args.output)
+        media = resolve_media_type(args.media, args.input)
+        if args.episodes and is_bilibili_audio_track_url(args.input):
+            safe_print(
+                "Warning: single audio URL detected; ignoring --episodes.",
+                file=sys.stderr,
+            )
+        if args.media == "video" and is_bilibili_audio_url(args.input):
+            safe_print(
+                "Warning: audio URL detected; ignoring --media video and using audio mode.",
+                file=sys.stderr,
+            )
+        safe_print(f"Media type: {media}")
+        download = download_video if media == "video" else download_audio
+        result = download(download_url, summary, episodes, args.output)
         for line in format_download_report(result):
             safe_print(line)
         return 1 if result.failed_episodes else 0

@@ -1,18 +1,32 @@
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from io import BytesIO, StringIO, TextIOWrapper
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from scripts.bilibili_downloader import (
+    build_audio_options,
     build_episode_url,
     build_download_items,
     build_download_urls,
+    build_video_options,
+    create_parser,
     default_download_dir,
     determine_download_plan,
+    download_audio,
     download_items,
+    download_video,
     format_download_report,
+    infer_media_type,
+    is_bilibili_audio_playlist_url,
+    is_bilibili_audio_track_url,
+    is_bilibili_audio_url,
+    main,
     normalize_bilibili_url,
     parse_episode_selection,
+    resolve_media_type,
     safe_print,
     summarize_metadata,
     VideoSummary,
@@ -68,6 +82,43 @@ class UrlTests(unittest.TestCase):
             "https://www.bilibili.com/video/BV1Ag4y1Z7Ga/",
         )
 
+    def test_infers_video_media_from_bilibili_video_url(self):
+        self.assertEqual(
+            infer_media_type("https://www.bilibili.com/video/BV1Ag4y1Z7Ga/"),
+            "video",
+        )
+
+    def test_infers_audio_media_from_bilibili_audio_url(self):
+        self.assertEqual(
+            infer_media_type("https://www.bilibili.com/audio/au123456"),
+            "audio",
+        )
+
+    def test_infers_audio_media_from_bilibili_audio_domain(self):
+        self.assertEqual(
+            infer_media_type("https://audio.bilibili.com/audio/au123456"),
+            "audio",
+        )
+
+    def test_infers_audio_media_from_bilibili_audio_album_url(self):
+        self.assertEqual(
+            infer_media_type("https://www.bilibili.com/audio/am10627"),
+            "audio",
+        )
+
+    def test_identifies_audio_album_url(self):
+        self.assertTrue(is_bilibili_audio_playlist_url("https://www.bilibili.com/audio/am10627"))
+        self.assertFalse(is_bilibili_audio_playlist_url("https://www.bilibili.com/audio/au4059094"))
+
+    def test_identifies_audio_track_url(self):
+        self.assertTrue(is_bilibili_audio_track_url("https://www.bilibili.com/audio/au4059094"))
+        self.assertFalse(is_bilibili_audio_track_url("https://www.bilibili.com/audio/am10627"))
+
+    def test_identifies_bilibili_audio_url(self):
+        self.assertTrue(is_bilibili_audio_url("https://www.bilibili.com/audio/am10627"))
+        self.assertTrue(is_bilibili_audio_url("https://www.bilibili.com/audio/au4059094"))
+        self.assertFalse(is_bilibili_audio_url("https://www.bilibili.com/video/BV1Ag4y1Z7Ga/"))
+
 
 class DownloadPlanTests(unittest.TestCase):
     def test_keeps_original_link_when_episodes_are_not_specified(self):
@@ -108,8 +159,350 @@ class DownloadPlanTests(unittest.TestCase):
             ],
         )
 
+    def test_audio_album_without_episode_selection_downloads_all_tracks(self):
+        url = "https://www.bilibili.com/audio/am10627"
+        summary = VideoSummary("title", True, 13)
+
+        plan_url, episodes = determine_download_plan(url, None, summary)
+
+        self.assertEqual(plan_url, url)
+        self.assertEqual(episodes, list(range(1, 14)))
+
+    def test_audio_album_with_episode_selection_keeps_album_url(self):
+        url = "https://www.bilibili.com/audio/am10627"
+        summary = VideoSummary("title", True, 13)
+
+        plan_url, episodes = determine_download_plan(url, "1,3-4", summary)
+
+        self.assertEqual(plan_url, url)
+        self.assertEqual(episodes, [1, 3, 4])
+
+    def test_audio_album_download_items_do_not_build_video_page_urls(self):
+        url = "https://www.bilibili.com/audio/am10627"
+        summary = VideoSummary("title", True, 13)
+
+        self.assertEqual(
+            build_download_items(url, summary, [1, 3]),
+            [
+                (1, "https://www.bilibili.com/audio/am10627"),
+                (3, "https://www.bilibili.com/audio/am10627"),
+            ],
+        )
+
+    def test_audio_track_with_episode_selection_ignores_selection(self):
+        url = "https://www.bilibili.com/audio/au4059094"
+        summary = VideoSummary("title", False, 1)
+
+        plan_url, episodes = determine_download_plan(url, "2", summary)
+
+        self.assertEqual(plan_url, url)
+        self.assertEqual(episodes, [1])
+
 
 class DownloadExecutionTests(unittest.TestCase):
+    def test_parser_media_default_allows_url_based_detection(self):
+        args = create_parser().parse_args(["-i", "https://www.bilibili.com/video/BVtest"])
+
+        self.assertIsNone(args.media)
+
+    def test_parser_description_mentions_audio_and_video(self):
+        self.assertIn("audio or video", create_parser().description)
+
+    def test_parser_input_help_accepts_any_bilibili_url(self):
+        input_action = next(action for action in create_parser()._actions if action.dest == "input")
+
+        self.assertEqual(input_action.help, "Bilibili URL.")
+
+    def test_video_options_download_best_video_and_audio_to_output_directory(self):
+        options = build_video_options(Path("C:/Downloads"))
+
+        self.assertEqual(options["format"], "bv*+ba/best")
+        self.assertEqual(options["merge_output_format"], "mp4")
+        self.assertEqual(options["outtmpl"], "C:\\Downloads\\%(title).200B-%(id)s.%(ext)s")
+        self.assertTrue(options["noplaylist"])
+
+    def test_audio_options_extract_mp3_to_output_directory(self):
+        options = build_audio_options(Path("C:/Downloads"))
+
+        self.assertEqual(options["format"], "bestaudio/best")
+        self.assertEqual(options["outtmpl"], "C:\\Downloads\\%(title).200B-%(id)s.%(ext)s")
+        self.assertEqual(
+            options["postprocessors"],
+            [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "0",
+                }
+            ],
+        )
+
+    def test_audio_options_can_select_playlist_item(self):
+        options = build_audio_options(Path("C:/Downloads"), playlist_items="3")
+
+        self.assertFalse(options["noplaylist"])
+        self.assertEqual(options["playlist_items"], "3")
+
+    def test_download_audio_album_downloads_selected_items_one_by_one(self):
+        captured_options = []
+        downloaded_urls = []
+
+        class FakeYoutubeDL:
+            def __init__(self, options):
+                captured_options.append(options)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def download(self, urls):
+                downloaded_urls.append(urls)
+                return 0
+
+        stdout = StringIO()
+        with TemporaryDirectory() as temp_dir:
+            with (
+                redirect_stdout(stdout),
+                patch.dict(
+                    "sys.modules",
+                    {"yt_dlp": SimpleNamespace(YoutubeDL=FakeYoutubeDL)},
+                ),
+            ):
+                result = download_audio(
+                    "https://www.bilibili.com/audio/am10627",
+                    VideoSummary("title", True, 13),
+                    [1, 3, 5],
+                    Path(temp_dir),
+                )
+
+        self.assertEqual(len(captured_options), 3)
+        self.assertEqual([options["playlist_items"] for options in captured_options], ["1", "3", "5"])
+        self.assertEqual(
+            downloaded_urls,
+            [
+                ["https://www.bilibili.com/audio/am10627"],
+                ["https://www.bilibili.com/audio/am10627"],
+                ["https://www.bilibili.com/audio/am10627"],
+            ],
+        )
+        self.assertIn("Downloading playlist item 1 of 13", stdout.getvalue())
+        self.assertIn("Downloading playlist item 3 of 13", stdout.getvalue())
+        self.assertIn("Downloading playlist item 5 of 13", stdout.getvalue())
+        self.assertEqual(result.succeeded_episodes, [1, 3, 5])
+        self.assertEqual(result.failed_episodes, [])
+
+    def test_download_audio_album_continues_after_failed_item(self):
+        class FakeYoutubeDL:
+            def __init__(self, options):
+                self.options = options
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def download(self, urls):
+                if self.options["playlist_items"] == "3":
+                    return 1
+                return 0
+
+        with TemporaryDirectory() as temp_dir:
+            with (
+                redirect_stdout(StringIO()),
+                redirect_stderr(StringIO()),
+                patch.dict(
+                    "sys.modules",
+                    {"yt_dlp": SimpleNamespace(YoutubeDL=FakeYoutubeDL)},
+                ),
+            ):
+                result = download_audio(
+                    "https://www.bilibili.com/audio/am10627",
+                    VideoSummary("title", True, 13),
+                    [1, 3, 5],
+                    Path(temp_dir),
+                )
+
+        self.assertEqual(result.succeeded_episodes, [1, 5])
+        self.assertEqual(result.failed_episodes, [3])
+
+    def test_download_items_prints_playlist_progress_when_total_is_provided(self):
+        class FakeYDL:
+            def download(self, urls):
+                return 0
+
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            result = download_items(
+                FakeYDL(),
+                [
+                    (1, "https://example.test/video?p=1"),
+                    (5, "https://example.test/video?p=5"),
+                ],
+                total_episodes=13,
+            )
+
+        self.assertIn("Downloading playlist item 1 of 13", stdout.getvalue())
+        self.assertIn("Downloading playlist item 5 of 13", stdout.getvalue())
+        self.assertEqual(result.succeeded_episodes, [1, 5])
+
+    def test_download_video_prints_playlist_progress_for_selected_parts(self):
+        class FakeYoutubeDL:
+            def __init__(self, options):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def download(self, urls):
+                return 0
+
+        stdout = StringIO()
+        with TemporaryDirectory() as temp_dir:
+            with (
+                redirect_stdout(stdout),
+                patch.dict(
+                    "sys.modules",
+                    {"yt_dlp": SimpleNamespace(YoutubeDL=FakeYoutubeDL)},
+                ),
+            ):
+                result = download_video(
+                    "https://www.bilibili.com/video/BVtest/",
+                    VideoSummary("title", True, 13),
+                    [1, 5],
+                    Path(temp_dir),
+                )
+
+        self.assertIn("Downloading playlist item 1 of 13", stdout.getvalue())
+        self.assertIn("Downloading playlist item 5 of 13", stdout.getvalue())
+        self.assertEqual(result.succeeded_episodes, [1, 5])
+
+    def test_audio_url_forces_audio_even_when_video_is_requested(self):
+        self.assertEqual(
+            resolve_media_type("video", "https://www.bilibili.com/audio/au4059094"),
+            "audio",
+        )
+
+    def test_video_url_respects_explicit_audio_request(self):
+        self.assertEqual(
+            resolve_media_type("audio", "https://www.bilibili.com/video/BVtest"),
+            "audio",
+        )
+
+    def test_main_routes_video_media_to_video_downloader(self):
+        summary = VideoSummary("title", False, 1)
+        result = type("Result", (), {"succeeded_episodes": [1], "failed_episodes": []})()
+
+        with (
+            redirect_stdout(StringIO()),
+            redirect_stderr(StringIO()),
+            patch("scripts.bilibili_downloader.fetch_metadata", return_value={"title": "title"}),
+            patch("scripts.bilibili_downloader.summarize_metadata", return_value=summary),
+            patch("scripts.bilibili_downloader.download_video", return_value=result) as download_video,
+        ):
+            exit_code = main(["-i", "https://www.bilibili.com/video/BVtest", "-m", "video"])
+
+        self.assertEqual(exit_code, 0)
+        download_video.assert_called_once_with(
+            "https://www.bilibili.com/video/BVtest",
+            summary,
+            [1],
+            default_download_dir(),
+        )
+
+    def test_main_routes_omitted_media_to_video_for_video_url(self):
+        summary = VideoSummary("title", False, 1)
+        result = type("Result", (), {"succeeded_episodes": [1], "failed_episodes": []})()
+
+        with (
+            redirect_stdout(StringIO()),
+            redirect_stderr(StringIO()),
+            patch("scripts.bilibili_downloader.fetch_metadata", return_value={"title": "title"}),
+            patch("scripts.bilibili_downloader.summarize_metadata", return_value=summary),
+            patch("scripts.bilibili_downloader.download_audio") as download_audio,
+            patch("scripts.bilibili_downloader.download_video", return_value=result) as download_video,
+        ):
+            exit_code = main(["-i", "https://www.bilibili.com/video/BVtest"])
+
+        self.assertEqual(exit_code, 0)
+        download_audio.assert_not_called()
+        download_video.assert_called_once()
+
+    def test_main_routes_omitted_media_to_audio_for_audio_url(self):
+        summary = VideoSummary("title", False, 1)
+        result = type("Result", (), {"succeeded_episodes": [1], "failed_episodes": []})()
+
+        with (
+            redirect_stdout(StringIO()),
+            redirect_stderr(StringIO()),
+            patch("scripts.bilibili_downloader.fetch_metadata", return_value={"title": "title"}),
+            patch("scripts.bilibili_downloader.summarize_metadata", return_value=summary),
+            patch("scripts.bilibili_downloader.download_audio", return_value=result) as download_audio,
+            patch("scripts.bilibili_downloader.download_video") as download_video,
+        ):
+            exit_code = main(["-i", "https://www.bilibili.com/audio/au123456"])
+
+        self.assertEqual(exit_code, 0)
+        download_audio.assert_called_once()
+        download_video.assert_not_called()
+
+    def test_main_forces_audio_for_audio_url_even_when_video_is_requested(self):
+        summary = VideoSummary("title", False, 1)
+        result = type("Result", (), {"succeeded_episodes": [1], "failed_episodes": []})()
+        stderr = StringIO()
+
+        with (
+            redirect_stdout(StringIO()),
+            redirect_stderr(stderr),
+            patch("scripts.bilibili_downloader.fetch_metadata", return_value={"title": "title"}),
+            patch("scripts.bilibili_downloader.summarize_metadata", return_value=summary),
+            patch("scripts.bilibili_downloader.download_audio", return_value=result) as download_audio,
+            patch("scripts.bilibili_downloader.download_video") as download_video,
+        ):
+            exit_code = main(
+                ["-i", "https://www.bilibili.com/audio/au4059094", "-m", "video"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn(
+            "Warning: audio URL detected; ignoring --media video and using audio mode.",
+            stderr.getvalue(),
+        )
+        download_audio.assert_called_once()
+        download_video.assert_not_called()
+
+    def test_main_ignores_episode_selection_for_single_audio_url(self):
+        summary = VideoSummary("title", False, 1)
+        result = type("Result", (), {"succeeded_episodes": [1], "failed_episodes": []})()
+        stderr = StringIO()
+
+        with (
+            redirect_stdout(StringIO()),
+            redirect_stderr(stderr),
+            patch("scripts.bilibili_downloader.fetch_metadata", return_value={"title": "title"}),
+            patch("scripts.bilibili_downloader.summarize_metadata", return_value=summary),
+            patch("scripts.bilibili_downloader.download_audio", return_value=result) as download_audio,
+        ):
+            exit_code = main(["-i", "https://www.bilibili.com/audio/au4059094", "-e", "2"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn(
+            "Warning: single audio URL detected; ignoring --episodes.",
+            stderr.getvalue(),
+        )
+        download_audio.assert_called_once_with(
+            "https://www.bilibili.com/audio/au4059094",
+            summary,
+            [1],
+            default_download_dir(),
+        )
+
     def test_download_items_continues_after_failed_episode(self):
         class FakeYDL:
             def __init__(self):

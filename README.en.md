@@ -2,17 +2,21 @@
 
 [简体中文](README.md) | English
 
-A simple Bilibili audio downloader script. It currently downloads audio and converts it to mp3. The video download option is reserved for future work and is not implemented yet.
+A simple Bilibili downloader script. It currently downloads audio and converts it to mp3, and it can also download video and merge it to mp4.
 
 ## Features
 
-- Accepts a Bilibili video URL through `-i/--input`.
+- Accepts a Bilibili URL through `-i/--input`.
 - Without `-e/--episodes`, downloads only the video pointed to by the input URL.
 - If the input URL contains `?p=2`, downloads only part 2 by default.
 - With `-e/--episodes`, normalizes the Bilibili URL first, then downloads the selected parts.
 - Supports episode selections such as `1-5`, `1,2,6`, and `all`.
 - Supports a custom output directory through `-o/--output`; defaults to the system Downloads directory.
+- Without `-m/--media`, infers `audio` or `video` from the input URL.
+- Supports explicitly selecting `audio` or `video` through `-m/--media`.
+- Bilibili audio URLs such as `/audio/au...` and audio albums such as `/audio/am...` always use audio mode. If `--media video` is passed, the script prints a warning and ignores it.
 - Continues with later parts if one part fails.
+- Prints script-level progress for video parts and audio albums, such as `Downloading playlist item 5 of 13`.
 - Prints a final summary with succeeded count, failed count, and failed episode list.
 
 ## Requirements
@@ -23,18 +27,32 @@ Install the Python dependency:
 python -m pip install -U yt-dlp
 ```
 
-The script uses `yt-dlp` to download audio and uses FFmpeg as a post-processor to convert it to mp3. Make sure FFmpeg is installed and that `ffmpeg` can be run directly from your command line.
+The script uses `yt-dlp` to download media. Audio mode uses FFmpeg as a post-processor to convert audio to mp3. Video mode prefers the best video stream and best audio stream, then uses FFmpeg to merge them to mp4. Make sure FFmpeg is installed and that `ffmpeg` can be run directly from your command line.
 
 ## Usage
 
 ```powershell
-python .\scripts\bilibili_downloader.py -i "Bilibili video URL"
+python .\scripts\bilibili_downloader.py -i "Bilibili URL"
+```
+
+When `-m` is omitted, the script infers the media type from the URL. Regular Bilibili video URLs use video mode; Bilibili audio URLs use audio mode.
+
+Bilibili audio URLs are always downloaded as audio:
+
+```powershell
+python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/audio/au4059094"
+```
+
+Bilibili audio albums are downloaded in full when `-e` is omitted:
+
+```powershell
+python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/audio/am10627"
 ```
 
 Set a custom output directory:
 
 ```powershell
-python .\scripts\bilibili_downloader.py -i "Bilibili video URL" -o "C:\Users\YourName\Downloads\bilibili"
+python .\scripts\bilibili_downloader.py -i "Bilibili URL" -o "C:\Users\YourName\Downloads\bilibili"
 ```
 
 Show help:
@@ -43,17 +61,23 @@ Show help:
 python .\scripts\bilibili_downloader.py -h
 ```
 
+Download video:
+
+```powershell
+python .\scripts\bilibili_downloader.py -i "Bilibili video URL" -m video
+```
+
 ## Options
 
-- `-i`, `--input`: Bilibili video URL. Required.
+- `-i`, `--input`: Bilibili URL. Required.
 - `-e`, `--episodes`: Parts to download, such as `"1-5"`, `"1,2,6"`, or `all`.
 - `-o`, `--output`: Output directory. Defaults to the system Downloads directory.
-- `-m`, `--media`: Media type. Currently `audio` works; `video` is a TODO placeholder.
+- `-m`, `--media`: Media type. Use `audio` or `video`. When omitted, the type is inferred from the input URL. Bilibili audio URLs always use `audio`.
 - `-h`, `--help`: Show help.
 
 ## Episode Selection
 
-If `-e` is not provided, the script downloads only the video pointed to by `-i`.
+If `-e` is not provided, regular video URLs download only the video pointed to by `-i`.
 
 For example, this URL points to part 2:
 
@@ -82,6 +106,32 @@ Download all parts:
 ```powershell
 python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/video/BV1Ag4y1Z7Ga/" -e all
 ```
+
+## Audio Album Selection
+
+A Bilibili single-audio URL looks like this:
+
+```text
+https://www.bilibili.com/audio/au4059094
+```
+
+A Bilibili audio album URL looks like this:
+
+```text
+https://www.bilibili.com/audio/am10627
+```
+
+When `-e` is omitted for an audio album, the script downloads the full album. When `-e` is provided, it downloads the selected tracks by their album order:
+
+```powershell
+python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/audio/am10627" -e "1,3-5"
+```
+
+Audio albums are downloaded track by track, so the script can record success or failure for each selected track. If one track fails, later tracks are still downloaded. The script prints progress such as `Downloading playlist item 5 of 13`.
+
+Single-audio URLs do not need `-e`. If `-e` is passed for an `au...` URL, the script prints a warning and ignores `-e`.
+
+Audio URLs always use audio mode. If `--media video` is passed for an audio URL, the script prints a warning and continues in audio mode.
 
 ## Failure Summary
 
@@ -125,5 +175,4 @@ If the value after `-e` contains commas or hyphens, wrapping it in double quotes
 
 ## Roadmap
 
-- Implement video download support for `-m video`.
 - Add more output format options if needed.

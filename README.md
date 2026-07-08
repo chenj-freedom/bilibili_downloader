@@ -2,17 +2,21 @@
 
 简体中文 | [English](README.en.md)
 
-一个简单的 B 站音频下载脚本。当前支持下载音频并转换为 mp3；视频下载参数已预留，但尚未实现。
+一个简单的 B 站下载脚本。当前支持下载音频并转换为 mp3，也支持下载视频并合并为 mp4。
 
 ## 功能
 
-- 支持通过 `-i/--input` 输入 B 站视频链接。
+- 支持通过 `-i/--input` 输入 B 站链接。
 - 不传 `-e/--episodes` 时，只下载输入链接本身指向的视频。
 - 如果输入链接带 `?p=2`，默认只下载第 2P。
 - 传 `-e/--episodes` 时，会先规范化 B 站链接，再按指定分 P 下载。
 - `-e/--episodes` 支持 `1-5`、`1,2,6`、`all`。
 - 支持通过 `-o/--output` 指定下载目录，默认保存到系统 Downloads 目录。
+- 不传 `-m/--media` 时，会根据输入链接自动选择 `audio` 或 `video`。
+- 支持通过 `-m/--media` 显式指定 `audio` 或 `video`。
+- B 站音频链接 `/audio/au...` 和音频合集 `/audio/am...` 会强制使用 `audio` 模式；如果传了 `--media video`，会打印 warning 并忽略。
 - 下载多个分 P 时，单个分 P 失败后会继续下载后续分 P。
+- 下载视频分 P 或音频合集时，会打印脚本层进度，例如 `Downloading playlist item 5 of 13`。
 - 执行结束后会输出成功数量、失败数量和失败分 P 列表。
 
 ## 依赖
@@ -23,18 +27,32 @@
 python -m pip install -U yt-dlp
 ```
 
-脚本会通过 `yt-dlp` 下载音频，并使用 FFmpeg 后处理转换为 mp3。请确保本机已经安装 FFmpeg，并且 `ffmpeg` 可以在命令行里直接运行。
+脚本会通过 `yt-dlp` 下载媒体内容。音频模式会使用 FFmpeg 后处理转换为 mp3；视频模式会优先下载最佳视频流和最佳音频流，并使用 FFmpeg 合并为 mp4。请确保本机已经安装 FFmpeg，并且 `ffmpeg` 可以在命令行里直接运行。
 
 ## 基本用法
 
 ```powershell
-python .\scripts\bilibili_downloader.py -i "B站视频链接"
+python .\scripts\bilibili_downloader.py -i "B站链接"
+```
+
+不传 `-m` 时，脚本会根据链接类型自动选择下载音频或视频。普通 B 站视频链接默认按视频下载；B 站音频链接默认按音频下载。
+
+B 站音频链接始终按音频下载：
+
+```powershell
+python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/audio/au4059094"
+```
+
+B 站音频合集不传 `-e` 时会下载全集：
+
+```powershell
+python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/audio/am10627"
 ```
 
 指定输出目录：
 
 ```powershell
-python .\scripts\bilibili_downloader.py -i "B站视频链接" -o "C:\Users\YourName\Downloads\bilibili"
+python .\scripts\bilibili_downloader.py -i "B站链接" -o "C:\Users\YourName\Downloads\bilibili"
 ```
 
 查看帮助：
@@ -43,17 +61,23 @@ python .\scripts\bilibili_downloader.py -i "B站视频链接" -o "C:\Users\YourN
 python .\scripts\bilibili_downloader.py -h
 ```
 
+下载视频：
+
+```powershell
+python .\scripts\bilibili_downloader.py -i "B站视频链接" -m video
+```
+
 ## 参数说明
 
-- `-i`, `--input`：B 站视频链接，必填。
+- `-i`, `--input`：B 站链接，必填。
 - `-e`, `--episodes`：指定分 P，例如 `"1-5"`、`"1,2,6"` 或 `all`。
 - `-o`, `--output`：下载目录，不传时默认保存到系统 Downloads 目录。
-- `-m`, `--media`：媒体类型，目前 `audio` 可用，`video` 是 TODO 占位。
+- `-m`, `--media`：媒体类型，可选 `audio` 或 `video`。不传时会根据输入链接自动判断；如果输入是 B 站音频链接，会强制使用 `audio`。
 - `-h`, `--help`：显示帮助。
 
 ## 分 P 下载规则
 
-如果不传 `-e`，脚本只下载 `-i` 链接本身对应的视频。
+如果不传 `-e`，普通视频链接只下载 `-i` 链接本身对应的视频。
 
 例如这个链接打开的是第 2P：
 
@@ -82,6 +106,32 @@ python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/video/BV1Ag
 ```powershell
 python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/video/BV1Ag4y1Z7Ga/" -e all
 ```
+
+## 音频合集规则
+
+B 站音频单曲链接形如：
+
+```text
+https://www.bilibili.com/audio/au4059094
+```
+
+B 站音频合集链接形如：
+
+```text
+https://www.bilibili.com/audio/am10627
+```
+
+音频合集不传 `-e` 时会下载全集。传 `-e` 时会按合集内曲目序号下载指定曲目：
+
+```powershell
+python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/audio/am10627" -e "1,3-5"
+```
+
+音频合集会逐首下载并记录每首的成功或失败；某一首失败时，会继续下载后续曲目。下载时会显示脚本层进度，例如 `Downloading playlist item 5 of 13`。
+
+音频单曲不需要 `-e`。如果对 `au...` 单曲传了 `-e`，脚本会打印 warning 并忽略 `-e`。
+
+音频链接会强制使用 `audio` 模式。如果对音频链接传了 `--media video`，脚本会打印 warning 并继续按音频下载。
 
 ## 下载失败统计
 
@@ -125,5 +175,4 @@ Download summary: succeeded 3, failed 0
 
 ## 后续计划
 
-- 实现 `-m video` 视频下载。
 - 根据需要补充更多输出格式选项。
