@@ -166,26 +166,6 @@ def download_items(ydl, items, total_episodes=None):
     return result
 
 
-def download_playlist_items(ydl, url, episodes):
-    result = DownloadResult(succeeded_episodes=[], failed_episodes=[])
-    try:
-        download_code = ydl.download([url])
-    except Exception as exc:
-        result.failed_episodes.extend(episodes)
-        safe_print(f"Playlist items {','.join(str(episode) for episode in episodes)} failed: {exc}", file=sys.stderr)
-        return result
-
-    if download_code == 0:
-        result.succeeded_episodes.extend(episodes)
-    else:
-        result.failed_episodes.extend(episodes)
-        safe_print(
-            f"Playlist items {','.join(str(episode) for episode in episodes)} failed with exit code {download_code}",
-            file=sys.stderr,
-        )
-    return result
-
-
 def format_download_report(result):
     lines = [
         f"Download summary: succeeded {len(result.succeeded_episodes)}, failed {len(result.failed_episodes)}"
