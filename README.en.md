@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-A simple Bilibili downloader script. It currently downloads audio and converts it to mp3, and it can also download video and merge it to mp4.
+A Bilibili downloader script. It currently supports audio and video downloads.
 
 ## Features
 
@@ -27,7 +27,7 @@ Install the Python dependency:
 python -m pip install -U yt-dlp
 ```
 
-The script uses `yt-dlp` to download media. Audio mode uses FFmpeg as a post-processor to convert audio to mp3. Video mode prefers the best video stream and best audio stream, then uses FFmpeg to merge them to mp4. Make sure FFmpeg is installed and that `ffmpeg` can be run directly from your command line.
+The script uses `yt-dlp` to download media. Audio mode uses FFmpeg to produce mp3 files. Video mode prefers the best video stream and best audio stream, then uses FFmpeg to produce mp4 files. Make sure FFmpeg is installed and that `ffmpeg` can be run directly from your command line.
 
 ## Usage
 
