@@ -10,9 +10,12 @@ from unittest.mock import patch
 from scripts.bilibili_downloader import (
     build_audio_options,
     build_episode_url,
+    build_bilibili_collection_plan,
     build_download_items,
     build_download_urls,
     build_video_options,
+    BilibiliCollectionItem,
+    BilibiliCollectionPlan,
     DOWNLOAD_EVENT_PREFIX,
     create_parser,
     default_download_dir,
@@ -202,6 +205,85 @@ class DownloadPlanTests(unittest.TestCase):
 
         self.assertEqual(plan_url, url)
         self.assertEqual(episodes, [1])
+
+
+class BilibiliCollectionPlanTests(unittest.TestCase):
+    def test_build_bilibili_collection_plan_expands_nested_bv_pages(self):
+        state = {
+            "sectionsInfo": {
+                "title": "宋词三百首",
+                "sections": [
+                    {
+                        "title": "正片",
+                        "episodes": [
+                            {"bvid": "BVfirst", "title": "宋词三百首1-3"},
+                            {"bvid": "BVsecond", "title": "宋词三百首4"},
+                        ],
+                    }
+                ],
+            }
+        }
+
+        def fake_page_fetcher(bvid):
+            return {
+                "BVfirst": [
+                    {"page": 1, "part": "001"},
+                    {"page": 2, "part": "002"},
+                    {"page": 3, "part": "003"},
+                ],
+                "BVsecond": [{"page": 1, "part": "004"}],
+            }[bvid]
+
+        plan = build_bilibili_collection_plan(state, page_fetcher=fake_page_fetcher)
+
+        self.assertEqual(plan.title, "宋词三百首")
+        self.assertEqual(len(plan.items), 4)
+        self.assertEqual(
+            [(item.episode, item.url) for item in plan.items],
+            [
+                (1, "https://www.bilibili.com/video/BVfirst?p=1"),
+                (2, "https://www.bilibili.com/video/BVfirst?p=2"),
+                (3, "https://www.bilibili.com/video/BVfirst?p=3"),
+                (4, "https://www.bilibili.com/video/BVsecond"),
+            ],
+        )
+
+    def test_build_bilibili_collection_plan_uses_embedded_pages_first(self):
+        state = {
+            "sectionsInfo": {
+                "title": "宋词三百首",
+                "sections": [
+                    {
+                        "episodes": [
+                            {
+                                "bvid": "BVfirst",
+                                "title": "宋词三百首1-2",
+                                "pages": [
+                                    {"page": 1, "part": "001"},
+                                    {"page": 2, "part": "002"},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        }
+
+        def failing_page_fetcher(_bvid):
+            raise AssertionError("page_fetcher should not be called")
+
+        plan = build_bilibili_collection_plan(state, page_fetcher=failing_page_fetcher)
+
+        self.assertEqual(
+            [(item.episode, item.url) for item in plan.items],
+            [
+                (1, "https://www.bilibili.com/video/BVfirst?p=1"),
+                (2, "https://www.bilibili.com/video/BVfirst?p=2"),
+            ],
+        )
+
+    def test_build_bilibili_collection_plan_returns_none_without_sections(self):
+        self.assertIsNone(build_bilibili_collection_plan({"videoData": {"pages": []}}))
 
 
 class DownloadExecutionTests(unittest.TestCase):
@@ -542,6 +624,45 @@ class DownloadExecutionTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         download_audio.assert_not_called()
         download_video.assert_called_once()
+
+    def test_main_uses_collection_episode_selection_when_sections_are_detected(self):
+        collection = BilibiliCollectionPlan(
+            title="宋词三百首",
+            items=[
+                BilibiliCollectionItem(1, "https://www.bilibili.com/video/BVfirst?p=1", "001"),
+                BilibiliCollectionItem(2, "https://www.bilibili.com/video/BVfirst?p=2", "002"),
+                BilibiliCollectionItem(3, "https://www.bilibili.com/video/BVfirst?p=3", "003"),
+                BilibiliCollectionItem(4, "https://www.bilibili.com/video/BVsecond", "004"),
+            ],
+        )
+        result = type("Result", (), {"succeeded_episodes": [4], "failed_episodes": []})()
+
+        with (
+            redirect_stdout(StringIO()),
+            redirect_stderr(StringIO()),
+            patch("scripts.bilibili_downloader.fetch_bilibili_collection_plan", return_value=collection),
+            patch("scripts.bilibili_downloader.fetch_metadata") as fetch_metadata,
+            patch("scripts.bilibili_downloader.download_video", return_value=result) as download_video,
+        ):
+            exit_code = main(["-i", "https://www.bilibili.com/video/BVsecond", "-e", "4"])
+
+        self.assertEqual(exit_code, 0)
+        fetch_metadata.assert_not_called()
+        download_video.assert_called_once()
+        args, kwargs = download_video.call_args
+        self.assertEqual(
+            args[:4],
+            (
+                "https://www.bilibili.com/video/BVsecond",
+                VideoSummary("宋词三百首", True, 4),
+                [4],
+                default_download_dir(),
+            ),
+        )
+        self.assertEqual(
+            kwargs["download_items_override"],
+            [(4, "https://www.bilibili.com/video/BVsecond")],
+        )
 
     def test_main_routes_omitted_media_to_audio_for_audio_url(self):
         summary = VideoSummary("title", False, 1)

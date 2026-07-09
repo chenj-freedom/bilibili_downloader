@@ -11,6 +11,7 @@ A Bilibili downloader script. It currently supports audio and video downloads.
 - If the input URL contains `?p=2`, downloads only part 2 by default.
 - With `-e/--episodes`, normalizes the Bilibili URL first, then downloads the selected parts.
 - Supports episode selections such as `1-5`, `1,2,6`, and `all`.
+- Detects video collections and expands their BVs and nested BV parts into one ordered download list.
 - Supports a custom output directory through `-o/--output`; defaults to the system Downloads directory.
 - Without `-m/--media`, infers `audio` or `video` from the input URL.
 - Supports explicitly selecting `audio` or `video` through `-m/--media`.
@@ -121,7 +122,25 @@ python .\scripts\bilibili_downloader.py -i "Bilibili video URL" -m video
 - `-m`, `--media`: Media type. Use `audio` or `video`. When omitted, the type is inferred from the input URL. Bilibili audio URLs always use `audio`.
 - `-h`, `--help`: Show help.
 
-## Episode Selection
+## Bilibili Video Structure
+
+The script treats Bilibili video pages as one of these structures:
+
+- **Single video**: one BV contains exactly one part.
+- **Multi-part video**: one BV contains multiple parts, such as part 1, part 2, and part 3.
+- **Video collection**: one collection directory contains multiple BVs. A BV inside the collection may also contain multiple parts.
+
+Detection rules:
+
+- If the page contains `sectionsInfo`, the script treats it as a video collection.
+- If there is no `sectionsInfo` and `videoData.pages` contains more than one item, the script treats it as a multi-part video.
+- If there is no `sectionsInfo` and `videoData.pages` contains one item, the script treats it as a single video.
+
+For video collections, when `-e` is provided, the script expands the collection into one ordered list before applying the selection. For example, if items 1-50 are in `BV1324y1o7E7` and items 51-100 are in `BV1hX4y1k7WH`, then `-e 60` means collection item 60, which maps to part 10 of the second BV.
+
+When `-e` is omitted, the script still downloads only the video or part pointed to by the input URL.
+
+## Episode And Collection Selection
 
 If `-e` is not provided, regular video URLs download only the video pointed to by `-i`.
 
@@ -151,6 +170,18 @@ Download all parts:
 
 ```powershell
 python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/video/BV1Ag4y1Z7Ga/" -e all
+```
+
+Download selected ordered items from a video collection:
+
+```powershell
+python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/video/BV1AiarzQEJ1" -e "60,101-103"
+```
+
+Download the full video collection:
+
+```powershell
+python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/video/BV1AiarzQEJ1" -e all
 ```
 
 ## Audio Album Selection

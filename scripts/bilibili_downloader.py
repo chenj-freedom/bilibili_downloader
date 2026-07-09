@@ -1,9 +1,13 @@
 import argparse
+import gzip
 import json
 import os
+import re
 import sys
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
+from urllib import request
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 
@@ -21,6 +25,19 @@ class VideoSummary:
 class DownloadResult:
     succeeded_episodes: list
     failed_episodes: list
+
+
+@dataclass(frozen=True)
+class BilibiliCollectionItem:
+    episode: int
+    url: str
+    title: str = ""
+
+
+@dataclass(frozen=True)
+class BilibiliCollectionPlan:
+    title: str
+    items: list
 
 
 def safe_print(*values, sep=" ", end="\n", file=None):
@@ -144,6 +161,22 @@ def normalize_bilibili_url(url):
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
+def is_bilibili_video_url(url):
+    parts = urlsplit(url)
+    return "bilibili.com" in parts.netloc.lower() and parts.path.lower().startswith("/video/")
+
+
+def extract_bvid(url):
+    match = re.search(r"/video/(BV[0-9A-Za-z]+)", urlsplit(url).path)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def build_bilibili_video_url(bvid):
+    return f"https://www.bilibili.com/video/{bvid}"
+
+
 def is_bilibili_audio_url(url):
     parts = urlsplit(url)
     return "bilibili.com" in parts.netloc.lower() and parts.path.lower().startswith("/audio/")
@@ -176,6 +209,117 @@ def current_episode_from_url(url):
     if not values or not values[0].isdigit():
         return 1
     return int(values[0])
+
+
+def fetch_text(url):
+    req = request.Request(
+        url,
+        headers={
+            "Accept-Encoding": "gzip, deflate",
+            "User-Agent": "Mozilla/5.0",
+        },
+    )
+    with request.urlopen(req, timeout=20) as response:
+        body = response.read()
+        encoding = (response.headers.get("Content-Encoding") or "").lower()
+    if "gzip" in encoding:
+        body = gzip.decompress(body)
+    elif "deflate" in encoding:
+        body = zlib.decompress(body)
+    return body.decode("utf-8", errors="replace")
+
+
+def extract_initial_state(html):
+    match = re.search(r"window\.__INITIAL_STATE__=(.*?);\(function\(\)", html)
+    if match is None:
+        return None
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return None
+
+
+def fetch_bilibili_initial_state(url):
+    html = fetch_text(normalize_bilibili_url(url))
+    return extract_initial_state(html)
+
+
+def fetch_bilibili_video_pages(bvid):
+    url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
+    try:
+        data = json.loads(fetch_text(url))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Failed to read Bilibili video metadata for {bvid}") from exc
+    if data.get("code") != 0:
+        raise RuntimeError(f"Failed to read Bilibili video metadata for {bvid}: {data.get('message')}")
+    return (data.get("data") or {}).get("pages") or []
+
+
+def extract_collection_episodes(state):
+    sections_info = (state or {}).get("sectionsInfo") or {}
+    sections = sections_info.get("sections") or []
+    episodes = []
+    for section in sections:
+        episodes.extend(
+            section.get("episodes")
+            or section.get("archives")
+            or section.get("ep_list")
+            or []
+        )
+    return sections_info, episodes
+
+
+def build_bilibili_collection_plan(state, page_fetcher=fetch_bilibili_video_pages):
+    sections_info, episodes = extract_collection_episodes(state)
+    if not sections_info or not episodes:
+        return None
+
+    items = []
+    page_cache = {}
+    for collection_episode in episodes:
+        bvid = collection_episode.get("bvid")
+        if not bvid:
+            continue
+        pages = collection_episode.get("pages")
+        if pages is None and bvid not in page_cache:
+            page_cache[bvid] = page_fetcher(bvid)
+        if pages is None:
+            pages = page_cache[bvid]
+        pages = pages or []
+        base_url = build_bilibili_video_url(bvid)
+        if not pages:
+            items.append(
+                BilibiliCollectionItem(
+                    len(items) + 1,
+                    base_url,
+                    collection_episode.get("title") or "",
+                )
+            )
+            continue
+        for page in pages:
+            page_number = int(page.get("page") or 1)
+            url = build_episode_url(base_url, page_number) if len(pages) > 1 else base_url
+            items.append(
+                BilibiliCollectionItem(
+                    len(items) + 1,
+                    url,
+                    page.get("part") or collection_episode.get("title") or "",
+                )
+            )
+
+    if not items:
+        return None
+    return BilibiliCollectionPlan(
+        title=sections_info.get("title") or "Bilibili collection",
+        items=items,
+    )
+
+
+def fetch_bilibili_collection_plan(url):
+    if not is_bilibili_video_url(url):
+        return None
+    state = fetch_bilibili_initial_state(url)
+    return build_bilibili_collection_plan(state)
 
 
 def determine_download_plan(url, episode_selection, summary):
@@ -304,18 +448,18 @@ def build_video_options(output_dir, progress_hooks=None):
     return options
 
 
-def download_audio(url, summary, episodes, output_dir):
+def download_audio(url, summary, episodes, output_dir, download_items_override=None):
     try:
         from yt_dlp import YoutubeDL
     except ImportError as exc:
         raise RuntimeError("yt-dlp is not installed. Run: python -m pip install -U yt-dlp") from exc
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    items = build_download_items(url, summary, episodes)
+    items = download_items_override or build_download_items(url, summary, episodes)
     progress_context = {"episode": None, "total": summary.total_episodes}
     progress_hooks = [create_progress_hook(progress_context)]
 
-    if is_bilibili_audio_playlist_url(url):
+    if download_items_override is None and is_bilibili_audio_playlist_url(url):
         result = DownloadResult(succeeded_episodes=[], failed_episodes=[])
         for episode, item_url in items:
             with YoutubeDL(
@@ -344,14 +488,14 @@ def download_audio(url, summary, episodes, output_dir):
         )
 
 
-def download_video(url, summary, episodes, output_dir):
+def download_video(url, summary, episodes, output_dir, download_items_override=None):
     try:
         from yt_dlp import YoutubeDL
     except ImportError as exc:
         raise RuntimeError("yt-dlp is not installed. Run: python -m pip install -U yt-dlp") from exc
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    items = build_download_items(url, summary, episodes)
+    items = download_items_override or build_download_items(url, summary, episodes)
     progress_context = {"episode": None, "total": summary.total_episodes}
     progress_hooks = [create_progress_hook(progress_context)]
 
@@ -401,11 +545,32 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     try:
-        metadata_url = normalize_bilibili_url(args.input) if args.episodes else args.input
-        info = fetch_metadata(metadata_url)
-        summary = summarize_metadata(info)
-        download_url, episodes = determine_download_plan(args.input, args.episodes, summary)
-        kind = "playlist" if summary.is_playlist else "single video"
+        download_items_override = None
+        collection_plan = None
+        if args.episodes and is_bilibili_video_url(args.input):
+            try:
+                collection_plan = fetch_bilibili_collection_plan(args.input)
+            except (RuntimeError, OSError, ValueError):
+                collection_plan = None
+
+        if collection_plan is not None:
+            summary = VideoSummary(collection_plan.title, True, len(collection_plan.items))
+            download_url = normalize_bilibili_url(args.input)
+            episodes = parse_episode_selection(args.episodes, summary.total_episodes)
+            selected_episodes = set(episodes)
+            download_items_override = [
+                (item.episode, item.url)
+                for item in collection_plan.items
+                if item.episode in selected_episodes
+            ]
+            kind = "collection"
+        else:
+            metadata_url = normalize_bilibili_url(args.input) if args.episodes else args.input
+            info = fetch_metadata(metadata_url)
+            summary = summarize_metadata(info)
+            download_url, episodes = determine_download_plan(args.input, args.episodes, summary)
+            kind = "playlist" if summary.is_playlist else "single video"
+
         safe_print(f"Detected {kind}: {summary.title}")
         safe_print(f"Total episodes: {summary.total_episodes}")
         safe_print(f"Downloading episodes: {','.join(str(episode) for episode in episodes)}")
@@ -430,7 +595,16 @@ def main(argv=None):
         )
         safe_print(f"Media type: {media}")
         download = download_video if media == "video" else download_audio
-        result = download(download_url, summary, episodes, args.output)
+        if download_items_override is None:
+            result = download(download_url, summary, episodes, args.output)
+        else:
+            result = download(
+                download_url,
+                summary,
+                episodes,
+                args.output,
+                download_items_override=download_items_override,
+            )
         for line in format_download_report(result):
             safe_print(line)
         return 1 if result.failed_episodes else 0

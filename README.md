@@ -11,6 +11,7 @@
 - 如果输入链接带 `?p=2`，默认只下载第 2P。
 - 传 `-e/--episodes` 时，会先规范化 B 站链接，再按指定分 P 下载。
 - `-e/--episodes` 支持 `1-5`、`1,2,6`、`all`。
+- 支持识别视频合集，并把合集里的多个 BV 和 BV 内分 P 展开成统一序号下载。
 - 支持通过 `-o/--output` 指定下载目录，默认保存到系统 Downloads 目录。
 - 不传 `-m/--media` 时，会根据输入链接自动选择 `audio` 或 `video`。
 - 支持通过 `-m/--media` 显式指定 `audio` 或 `video`。
@@ -121,7 +122,25 @@ python .\scripts\bilibili_downloader.py -i "B站视频链接" -m video
 - `-m`, `--media`：媒体类型，可选 `audio` 或 `video`。不传时会根据输入链接自动判断；如果输入是 B 站音频链接，会强制使用 `audio`。
 - `-h`, `--help`：显示帮助。
 
-## 分 P 下载规则
+## B 站视频结构说明
+
+这个脚本按下面的结构理解 B 站视频：
+
+- **单个视频**：一个 BV 里只有 1 个 P。比如打开后没有分 P 列表，也没有合集目录。
+- **多 P 视频**：一个 BV 里有多个 P。比如同一个 BV 下有第 1P、第 2P、第 3P。
+- **视频合集**：一个合集目录里包含多个 BV。合集里的某个 BV 也可能自己带多个 P。
+
+脚本判断规则：
+
+- 页面里有 `sectionsInfo` 时，按视频合集处理。
+- 没有 `sectionsInfo`，但 `videoData.pages` 超过 1 个时，按多 P 视频处理。
+- 没有 `sectionsInfo`，并且 `videoData.pages` 只有 1 个时，按单个视频处理。
+
+对于视频合集，传 `-e` 时脚本会先把合集展开成一个统一列表，再按统一序号下载。比如合集前 50 首在 `BV1324y1o7E7`，第 51 到 100 首在 `BV1hX4y1k7WH`，那么 `-e 60` 表示下载整个合集的第 60 项，也就是第二个 BV 里的第 10P。
+
+如果不传 `-e`，仍然只下载输入链接本身指向的视频或分 P。
+
+## 分 P / 合集下载规则
 
 如果不传 `-e`，普通视频链接只下载 `-i` 链接本身对应的视频。
 
@@ -151,6 +170,18 @@ python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/video/BV1Ag
 
 ```powershell
 python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/video/BV1Ag4y1Z7Ga/" -e all
+```
+
+下载视频合集里的指定统一序号：
+
+```powershell
+python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/video/BV1AiarzQEJ1" -e "60,101-103"
+```
+
+下载视频合集全集：
+
+```powershell
+python .\scripts\bilibili_downloader.py -i "https://www.bilibili.com/video/BV1AiarzQEJ1" -e all
 ```
 
 ## 音频合集规则
