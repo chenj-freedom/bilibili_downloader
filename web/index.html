@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bilibili Downloader</title>
+  <link rel="stylesheet" href="/style.css?v=20260708-10">
+</head>
+<body>
+  <main class="app">
+    <section class="toolbar">
+      <div>
+        <h1>Bilibili Downloader</h1>
+        <p>本地网页界面</p>
+      </div>
+      <div class="status" id="status">Ready</div>
+    </section>
+
+    <section id="tool-tip" class="tool-tip" hidden>
+      <span id="tool-tip-message">正在检测前置工具...</span>
+      <button id="tool-recheck" type="button">重新检测</button>
+    </section>
+
+    <section class="workspace">
+      <div class="top-grid">
+        <form id="download-form" class="panel controls-panel">
+          <label class="field">
+            <span>B 站链接</span>
+            <input id="url" name="url" type="url" required autocomplete="off" placeholder="https://www.bilibili.com/video/BV...">
+          </label>
+
+          <div class="field">
+            <span>媒体类型</span>
+            <div class="segmented">
+              <label><input type="radio" name="media" value="auto" checked><span>自动</span></label>
+              <label><input type="radio" name="media" value="audio"><span>音频</span></label>
+              <label><input type="radio" name="media" value="video"><span>视频</span></label>
+            </div>
+          </div>
+
+          <label class="field">
+            <span>分 P / 曲目</span>
+            <input id="episodes" name="episodes" type="text" autocomplete="off" placeholder="留空、1,2,5、1-5 或 all">
+          </label>
+
+          <label class="field">
+            <span>输出目录</span>
+            <input id="output" name="output" type="text" autocomplete="off" placeholder="留空时保存到系统 Downloads">
+          </label>
+
+          <div class="form-actions">
+            <button id="start-button" type="submit">开始下载</button>
+            <button id="stop-button" type="button" disabled>停止</button>
+          </div>
+        </form>
+
+        <section class="panel downloads-panel">
+          <div class="panel-header">
+            <h2>下载列表</h2>
+            <span id="download-count">0 项</span>
+          </div>
+          <div id="download-list" class="download-list" aria-live="polite">
+            <div class="empty-state">提交下载后会在这里显示每一项的进度</div>
+          </div>
+          <div id="download-pagination" class="pagination" hidden>
+            <button id="page-first" type="button" aria-label="首页" title="首页">&lt;&lt;</button>
+            <button id="page-prev" type="button" aria-label="上一页" title="上一页">&lt;</button>
+            <span id="page-status">第 1 / 1 页</span>
+            <button id="page-next" type="button" aria-label="下一页" title="下一页">&gt;</button>
+            <button id="page-last" type="button" aria-label="末页" title="末页">&gt;&gt;</button>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel log-panel">
+        <div class="log-header">
+          <h2>日志</h2>
+          <button id="clear-log" type="button">清空</button>
+        </div>
+        <pre id="log" aria-live="polite"></pre>
+      </section>
+    </section>
+  </main>
+
+  <script src="/app.js?v=20260708-10"></script>
+</body>
+</html>

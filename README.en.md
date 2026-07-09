@@ -21,15 +21,61 @@ A Bilibili downloader script. It currently supports audio and video downloads.
 
 ## Requirements
 
+Make sure these tools are installed:
+
+- Python 3
+- FFmpeg, with `ffmpeg` available from your command line
+
 Install the Python dependency:
 
 ```powershell
 python -m pip install -U yt-dlp
 ```
 
-The script uses `yt-dlp` to download media. Audio mode uses FFmpeg to produce mp3 files. Video mode prefers the best video stream and best audio stream, then uses FFmpeg to produce mp4 files. Make sure FFmpeg is installed and that `ffmpeg` can be run directly from your command line.
+The script uses `yt-dlp` to download media and relies on FFmpeg to handle audio and video files. Make sure FFmpeg is installed and that `ffmpeg` can be run directly from your command line.
 
-## Usage
+## Web UI Usage
+
+The web UI is recommended for users who do not want to type commands.
+
+Windows:
+
+```text
+Double-click start_web.bat
+```
+
+macOS:
+
+```text
+Double-click start_web.command
+```
+
+The browser opens automatically, usually at:
+
+```text
+http://127.0.0.1:8765
+```
+
+If port 8765 is already in use, the script tries later ports automatically. The actual URL is printed in the launcher window.
+
+The web UI lets you fill in:
+
+- Bilibili URL
+- Media type: auto, audio, or video
+- Parts / tracks: empty, `1,2,5`, `1-5`, or `all`
+- Output directory: empty means the system Downloads directory
+
+After a download starts, the web UI shows each item in a download list with its progress percentage and status. If one item fails, click its Retry button to download only that item again. The raw log stays visible on the right side for detailed yt-dlp output.
+
+If macOS says `start_web.command` is not executable, run this once in the project directory:
+
+```bash
+chmod +x start_web.command
+```
+
+Then double-click `start_web.command` again.
+
+## Command Line Usage
 
 ```powershell
 python .\scripts\bilibili_downloader.py -i "Bilibili URL"

@@ -1,3 +1,4 @@
+import json
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import BytesIO, StringIO, TextIOWrapper
@@ -12,12 +13,14 @@ from scripts.bilibili_downloader import (
     build_download_items,
     build_download_urls,
     build_video_options,
+    DOWNLOAD_EVENT_PREFIX,
     create_parser,
     default_download_dir,
     determine_download_plan,
     download_audio,
     download_items,
     download_video,
+    emit_download_event,
     format_download_report,
     infer_media_type,
     is_bilibili_audio_playlist_url,
@@ -26,8 +29,10 @@ from scripts.bilibili_downloader import (
     main,
     normalize_bilibili_url,
     parse_episode_selection,
+    create_progress_hook,
     resolve_media_type,
     safe_print,
+    configure_stream_utf8,
     summarize_metadata,
     VideoSummary,
 )
@@ -243,6 +248,45 @@ class DownloadExecutionTests(unittest.TestCase):
         self.assertFalse(options["noplaylist"])
         self.assertEqual(options["playlist_items"], "3")
 
+    def test_audio_options_accept_progress_hooks(self):
+        hook = object()
+        options = build_audio_options(Path("C:/Downloads"), progress_hooks=[hook])
+
+        self.assertEqual(options["progress_hooks"], [hook])
+
+    def test_video_options_accept_progress_hooks(self):
+        hook = object()
+        options = build_video_options(Path("C:/Downloads"), progress_hooks=[hook])
+
+        self.assertEqual(options["progress_hooks"], [hook])
+
+    def test_progress_hook_emits_percent_and_title(self):
+        stdout = StringIO()
+        hook = create_progress_hook({"episode": 2, "total": 5})
+
+        with (
+            redirect_stdout(stdout),
+            patch.dict("os.environ", {"BILI_DOWNLOADER_EVENTS": "1"}),
+        ):
+            hook(
+                {
+                    "status": "downloading",
+                    "downloaded_bytes": 50,
+                    "total_bytes": 100,
+                    "info_dict": {"title": "中文标题"},
+                }
+            )
+
+        event_line = next(
+            line for line in stdout.getvalue().splitlines() if line.startswith(DOWNLOAD_EVENT_PREFIX)
+        )
+        event = json.loads(event_line.removeprefix(DOWNLOAD_EVENT_PREFIX))
+        self.assertEqual(event["type"], "item_progress")
+        self.assertEqual(event["episode"], 2)
+        self.assertEqual(event["total"], 5)
+        self.assertEqual(event["percent"], 50.0)
+        self.assertEqual(event["name"], "中文标题")
+
     def test_download_audio_album_downloads_selected_items_one_by_one(self):
         captured_options = []
         downloaded_urls = []
@@ -349,6 +393,44 @@ class DownloadExecutionTests(unittest.TestCase):
         self.assertIn("Downloading playlist item 5 of 13", stdout.getvalue())
         self.assertEqual(result.succeeded_episodes, [1, 5])
 
+    def test_download_items_emits_json_events_when_enabled(self):
+        class FakeYDL:
+            def download(self, urls):
+                return 0
+
+        stdout = StringIO()
+
+        with (
+            redirect_stdout(stdout),
+            patch.dict("os.environ", {"BILI_DOWNLOADER_EVENTS": "1"}),
+        ):
+            result = download_items(
+                FakeYDL(),
+                [
+                    (1, "https://example.test/video?p=1"),
+                    (5, "https://example.test/video?p=5"),
+                ],
+                total_episodes=13,
+            )
+
+        events = [
+            json.loads(line.removeprefix(DOWNLOAD_EVENT_PREFIX))
+            for line in stdout.getvalue().splitlines()
+            if line.startswith(DOWNLOAD_EVENT_PREFIX)
+        ]
+
+        self.assertEqual(
+            [(event["type"], event["episode"]) for event in events],
+            [
+                ("item_started", 1),
+                ("item_completed", 1),
+                ("item_started", 5),
+                ("item_completed", 5),
+            ],
+        )
+        self.assertEqual(events[0]["total"], 13)
+        self.assertEqual(result.succeeded_episodes, [1, 5])
+
     def test_download_video_prints_playlist_progress_for_selected_parts(self):
         class FakeYoutubeDL:
             def __init__(self, options):
@@ -415,6 +497,33 @@ class DownloadExecutionTests(unittest.TestCase):
             [1],
             default_download_dir(),
         )
+
+    def test_main_emits_plan_event_when_events_are_enabled(self):
+        summary = VideoSummary("合集标题", True, 5)
+        result = type("Result", (), {"succeeded_episodes": [1, 3], "failed_episodes": []})()
+        stdout = StringIO()
+
+        with (
+            redirect_stdout(stdout),
+            redirect_stderr(StringIO()),
+            patch.dict("os.environ", {"BILI_DOWNLOADER_EVENTS": "1"}),
+            patch("scripts.bilibili_downloader.fetch_metadata", return_value={"title": "合集标题"}),
+            patch("scripts.bilibili_downloader.summarize_metadata", return_value=summary),
+            patch("scripts.bilibili_downloader.download_video", return_value=result),
+        ):
+            exit_code = main(["-i", "https://www.bilibili.com/video/BVtest", "-e", "1,3"])
+
+        events = [
+            json.loads(line.removeprefix(DOWNLOAD_EVENT_PREFIX))
+            for line in stdout.getvalue().splitlines()
+            if line.startswith(DOWNLOAD_EVENT_PREFIX)
+        ]
+        plan = next(event for event in events if event["type"] == "plan")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(plan["title"], "合集标题")
+        self.assertEqual(plan["episodes"], [1, 3])
+        self.assertEqual(plan["total"], 5)
+        self.assertEqual(plan["media"], "video")
 
     def test_main_routes_omitted_media_to_video_for_video_url(self):
         summary = VideoSummary("title", False, 1)
@@ -579,6 +688,22 @@ class PathTests(unittest.TestCase):
 
 
 class OutputTests(unittest.TestCase):
+    def test_safe_print_flushes_stream(self):
+        class FlushTrackingStream(StringIO):
+            def __init__(self):
+                super().__init__()
+                self.flushed = False
+
+            def flush(self):
+                self.flushed = True
+                super().flush()
+
+        stream = FlushTrackingStream()
+
+        safe_print("line", file=stream)
+
+        self.assertTrue(stream.flushed)
+
     def test_safe_print_does_not_fail_on_non_utf8_stream(self):
         raw = BytesIO()
         stream = TextIOWrapper(raw, encoding="cp1252", errors="strict")
@@ -587,6 +712,44 @@ class OutputTests(unittest.TestCase):
         stream.flush()
 
         self.assertIn(b"?????", raw.getvalue())
+
+    def test_configure_stream_utf8_preserves_chinese_output(self):
+        raw = BytesIO()
+        stream = TextIOWrapper(raw, encoding="cp1252", errors="strict")
+
+        configure_stream_utf8(stream)
+        safe_print("标题：唐诗三百首", file=stream)
+        stream.flush()
+
+        self.assertIn("标题：唐诗三百首".encode("utf-8"), raw.getvalue())
+
+    def test_emit_download_event_outputs_utf8_json_when_enabled(self):
+        stdout = StringIO()
+
+        with (
+            redirect_stdout(stdout),
+            patch.dict("os.environ", {"BILI_DOWNLOADER_EVENTS": "1"}),
+        ):
+            emit_download_event("item_progress", episode=1, percent=68.5, name="中文标题")
+
+        line = stdout.getvalue().strip()
+        self.assertTrue(line.startswith(DOWNLOAD_EVENT_PREFIX))
+        payload = json.loads(line.removeprefix(DOWNLOAD_EVENT_PREFIX))
+        self.assertEqual(payload["type"], "item_progress")
+        self.assertEqual(payload["episode"], 1)
+        self.assertEqual(payload["percent"], 68.5)
+        self.assertEqual(payload["name"], "中文标题")
+
+    def test_emit_download_event_is_silent_by_default(self):
+        stdout = StringIO()
+
+        with (
+            redirect_stdout(stdout),
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            emit_download_event("item_progress", episode=1, percent=68.5)
+
+        self.assertEqual(stdout.getvalue(), "")
 
 
 if __name__ == "__main__":

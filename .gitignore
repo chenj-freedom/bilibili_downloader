@@ -20,6 +20,7 @@ pip-wheel-metadata/
 .coverage
 .coverage.*
 htmlcov/
+.superpowers/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

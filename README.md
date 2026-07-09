@@ -21,15 +21,61 @@
 
 ## 依赖
 
+请先确保本机已经安装：
+
+- Python 3
+- FFmpeg，并且 `ffmpeg` 可以在命令行里直接运行
+
 安装 Python 依赖：
 
 ```powershell
 python -m pip install -U yt-dlp
 ```
 
-脚本会通过 `yt-dlp` 下载媒体内容。音频模式会使用 FFmpeg 生成 mp3；视频模式会优先下载最佳视频流和最佳音频流，并使用 FFmpeg 生成 mp4。请确保本机已经安装 FFmpeg，并且 `ffmpeg` 可以在命令行里直接运行。
+脚本会通过 `yt-dlp` 下载媒体内容，并依赖 FFmpeg 处理音频和视频文件。请确保本机已经安装 FFmpeg，并且 `ffmpeg` 可以在命令行里直接运行。
 
-## 基本用法
+## 网页 UI 用法
+
+推荐不熟悉命令行的用户使用网页 UI。
+
+Windows：
+
+```text
+双击 start_web.bat
+```
+
+macOS：
+
+```text
+双击 start_web.command
+```
+
+启动后会自动打开浏览器，通常地址是：
+
+```text
+http://127.0.0.1:8765
+```
+
+如果 8765 端口被占用，脚本会自动尝试后续端口，实际地址会显示在启动窗口里。
+
+网页里可以填写：
+
+- B 站链接
+- 媒体类型：自动、音频、视频
+- 分 P / 曲目：留空、`1,2,5`、`1-5` 或 `all`
+- 输出目录：留空时保存到系统 Downloads
+
+下载开始后，网页会在下载列表里逐条显示内容、进度百分比和状态。某一项下载失败时，可以点击该项右侧的“重新下载”按钮，只重试这一项。原始日志仍会显示在页面右侧，方便查看 yt-dlp 的详细输出。
+
+如果 macOS 提示 `start_web.command` 没有执行权限，请在项目目录运行一次：
+
+```bash
+chmod +x start_web.command
+```
+
+然后再双击 `start_web.command`。
+
+## 命令行用法
 
 ```powershell
 python .\scripts\bilibili_downloader.py -i "B站链接"

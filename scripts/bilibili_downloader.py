@@ -1,8 +1,13 @@
 import argparse
+import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
+
+
+DOWNLOAD_EVENT_PREFIX = "__BILI_EVENT__"
 
 
 @dataclass(frozen=True)
@@ -26,6 +31,60 @@ def safe_print(*values, sep=" ", end="\n", file=None):
     except UnicodeEncodeError:
         encoding = stream.encoding or "utf-8"
         stream.write(text.encode(encoding, errors="replace").decode(encoding))
+    flush = getattr(stream, "flush", None)
+    if flush is not None:
+        flush()
+
+
+def download_events_enabled():
+    return os.environ.get("BILI_DOWNLOADER_EVENTS") == "1"
+
+
+def emit_download_event(event_type, **payload):
+    if not download_events_enabled():
+        return
+    event = {"type": event_type}
+    event.update(payload)
+    safe_print(DOWNLOAD_EVENT_PREFIX + json.dumps(event, ensure_ascii=False))
+
+
+def create_progress_hook(context):
+    def hook(status):
+        if status.get("status") != "downloading":
+            return
+        downloaded = status.get("downloaded_bytes") or 0
+        total = status.get("total_bytes") or status.get("total_bytes_estimate") or 0
+        if not total:
+            return
+        info = status.get("info_dict") or {}
+        name = info.get("title") or Path(status.get("filename") or "").stem or None
+        emit_download_event(
+            "item_progress",
+            episode=context.get("episode"),
+            total=context.get("total"),
+            percent=round(downloaded * 100 / total, 1),
+            name=name,
+            size_bytes=total,
+            speed=status.get("speed"),
+            eta=status.get("eta"),
+        )
+
+    return hook
+
+
+def configure_stream_utf8(stream):
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is None:
+        return
+    try:
+        reconfigure(encoding="utf-8", errors="replace")
+    except (TypeError, ValueError, OSError):
+        return
+
+
+def configure_stdio_utf8():
+    configure_stream_utf8(sys.stdout)
+    configure_stream_utf8(sys.stderr)
 
 
 def default_download_dir(home=None):
@@ -146,22 +205,33 @@ def build_download_items(url, summary, episodes):
     return list(zip(episodes, urls))
 
 
-def download_items(ydl, items, total_episodes=None):
+def download_items(ydl, items, total_episodes=None, progress_context=None):
     result = DownloadResult(succeeded_episodes=[], failed_episodes=[])
     for episode, url in items:
+        if progress_context is not None:
+            progress_context["episode"] = episode
+            progress_context["total"] = total_episodes or len(items)
+        emit_download_event("item_started", episode=episode, total=total_episodes or len(items), url=url)
         if total_episodes and total_episodes > 1:
             safe_print(f"Downloading playlist item {episode} of {total_episodes}")
         try:
             download_code = ydl.download([url])
         except Exception as exc:
             result.failed_episodes.append(episode)
+            emit_download_event("item_failed", episode=episode, error=str(exc))
             safe_print(f"Episode {episode} failed: {exc}", file=sys.stderr)
             continue
 
         if download_code == 0:
             result.succeeded_episodes.append(episode)
+            emit_download_event("item_completed", episode=episode, percent=100)
         else:
             result.failed_episodes.append(episode)
+            emit_download_event(
+                "item_failed",
+                episode=episode,
+                error=f"exit code {download_code}",
+            )
             safe_print(f"Episode {episode} failed with exit code {download_code}", file=sys.stderr)
     return result
 
@@ -202,7 +272,7 @@ def fetch_metadata(url):
         return ydl.extract_info(url, download=False)
 
 
-def build_audio_options(output_dir, playlist_items=None):
+def build_audio_options(output_dir, playlist_items=None, progress_hooks=None):
     options = {
         "format": "bestaudio/best",
         "noplaylist": playlist_items is None,
@@ -217,16 +287,21 @@ def build_audio_options(output_dir, playlist_items=None):
     }
     if playlist_items is not None:
         options["playlist_items"] = playlist_items
+    if progress_hooks:
+        options["progress_hooks"] = progress_hooks
     return options
 
 
-def build_video_options(output_dir):
-    return {
+def build_video_options(output_dir, progress_hooks=None):
+    options = {
         "format": "bv*+ba/best",
         "merge_output_format": "mp4",
         "noplaylist": True,
         "outtmpl": str(output_dir / "%(title).200B-%(id)s.%(ext)s"),
     }
+    if progress_hooks:
+        options["progress_hooks"] = progress_hooks
+    return options
 
 
 def download_audio(url, summary, episodes, output_dir):
@@ -237,22 +312,36 @@ def download_audio(url, summary, episodes, output_dir):
 
     output_dir.mkdir(parents=True, exist_ok=True)
     items = build_download_items(url, summary, episodes)
+    progress_context = {"episode": None, "total": summary.total_episodes}
+    progress_hooks = [create_progress_hook(progress_context)]
 
     if is_bilibili_audio_playlist_url(url):
         result = DownloadResult(succeeded_episodes=[], failed_episodes=[])
         for episode, item_url in items:
-            with YoutubeDL(build_audio_options(output_dir, playlist_items=str(episode))) as ydl:
+            with YoutubeDL(
+                build_audio_options(
+                    output_dir,
+                    playlist_items=str(episode),
+                    progress_hooks=progress_hooks,
+                )
+            ) as ydl:
                 episode_result = download_items(
                     ydl,
                     [(episode, item_url)],
                     total_episodes=summary.total_episodes,
+                    progress_context=progress_context,
                 )
             result.succeeded_episodes.extend(episode_result.succeeded_episodes)
             result.failed_episodes.extend(episode_result.failed_episodes)
         return result
 
-    with YoutubeDL(build_audio_options(output_dir)) as ydl:
-        return download_items(ydl, items, total_episodes=summary.total_episodes)
+    with YoutubeDL(build_audio_options(output_dir, progress_hooks=progress_hooks)) as ydl:
+        return download_items(
+            ydl,
+            items,
+            total_episodes=summary.total_episodes,
+            progress_context=progress_context,
+        )
 
 
 def download_video(url, summary, episodes, output_dir):
@@ -263,9 +352,16 @@ def download_video(url, summary, episodes, output_dir):
 
     output_dir.mkdir(parents=True, exist_ok=True)
     items = build_download_items(url, summary, episodes)
+    progress_context = {"episode": None, "total": summary.total_episodes}
+    progress_hooks = [create_progress_hook(progress_context)]
 
-    with YoutubeDL(build_video_options(output_dir)) as ydl:
-        return download_items(ydl, items, total_episodes=summary.total_episodes)
+    with YoutubeDL(build_video_options(output_dir, progress_hooks=progress_hooks)) as ydl:
+        return download_items(
+            ydl,
+            items,
+            total_episodes=summary.total_episodes,
+            progress_context=progress_context,
+        )
 
 
 def create_parser():
@@ -300,6 +396,7 @@ def create_parser():
 
 
 def main(argv=None):
+    configure_stdio_utf8()
     parser = create_parser()
     args = parser.parse_args(argv)
 
@@ -324,6 +421,13 @@ def main(argv=None):
                 "Warning: audio URL detected; ignoring --media video and using audio mode.",
                 file=sys.stderr,
             )
+        emit_download_event(
+            "plan",
+            title=summary.title,
+            episodes=episodes,
+            total=summary.total_episodes,
+            media=media,
+        )
         safe_print(f"Media type: {media}")
         download = download_video if media == "video" else download_audio
         result = download(download_url, summary, episodes, args.output)
