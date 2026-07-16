@@ -5,11 +5,11 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-FB7299?style=for-the-badge" alt="MIT License"></a>
-  <a href="https://github.com/chenj-freedom/bilibili_downloader/commits/main"><img src="https://img.shields.io/github/last-commit/chenj-freedom/bilibili_downloader?style=for-the-badge&logo=github&color=00C4D9" alt="Last commit"></a>
   <img src="https://img.shields.io/badge/Python-3-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3">
   <img src="https://img.shields.io/badge/FFmpeg-required-007808?style=for-the-badge&logo=ffmpeg&logoColor=white" alt="FFmpeg required">
   <img src="https://img.shields.io/badge/Windows%20%7C%20macOS-supported-20242C?style=for-the-badge" alt="Windows and macOS">
+  <a href="https://github.com/chenj-freedom/bilibili_downloader/commits/main"><img src="https://img.shields.io/github/last-commit/chenj-freedom/bilibili_downloader?style=for-the-badge&logo=github&color=00C4D9" alt="Last commit"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-FB7299?style=for-the-badge" alt="MIT License"></a>
 </p>
 
 <p align="center">简体中文 · <a href="README.en.md">English</a></p>

@@ -258,6 +258,14 @@ class LogoAssetTests(unittest.TestCase):
             self.assertIn("github/last-commit/chenj-freedom/bilibili_downloader", content)
             self.assertIn("Python-3-", content)
             self.assertIn("FFmpeg-required-", content)
+            badge_positions = [
+                content.index("Python-3-"),
+                content.index("FFmpeg-required-"),
+                content.index("Windows%20%7C%20macOS-supported-"),
+                content.index("github/last-commit/chenj-freedom/bilibili_downloader"),
+                content.index("badge/License-MIT-"),
+            ]
+            self.assertEqual(badge_positions, sorted(badge_positions))
 
     def test_repository_includes_mit_license(self):
         license_text = Path("LICENSE").read_text(encoding="utf-8")
