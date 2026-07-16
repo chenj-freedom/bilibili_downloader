@@ -40,6 +40,19 @@ body {
   padding: 10px 0 18px;
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.brand-logo {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+}
+
 h1,
 h2,
 p {
@@ -490,6 +503,11 @@ button:disabled {
   .toolbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .brand-logo {
+    width: 46px;
+    height: 46px;
   }
 
   .status {

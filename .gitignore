@@ -20,12 +20,17 @@ pip-wheel-metadata/
 .coverage
 .coverage.*
 htmlcov/
-.superpowers/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .tox/
 .nox/
+
+# Local AI assistant metadata and generated planning documents
+.agents/
+.codex/
+.superpowers/
+docs/superpowers/
 
 # Local configuration and secrets
 .env

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Bilibili Downloader logo</title>
+  <desc id="desc">A pink retro television with a download arrow and play symbol</desc>
+  <defs>
+    <mask id="screen-cutout" maskUnits="userSpaceOnUse">
+      <rect width="512" height="512" fill="white"/>
+      <rect x="126" y="198" width="260" height="142" rx="48" fill="black"/>
+    </mask>
+    <mask id="play-cutout" maskUnits="userSpaceOnUse">
+      <rect width="512" height="512" fill="white"/>
+      <path d="M244 242v36l31-18z" fill="black"/>
+    </mask>
+  </defs>
+
+  <g fill="none" stroke="#00C4D9" stroke-width="16" stroke-linecap="round">
+    <path d="M84 144 48 122"/>
+    <path d="M76 177H36"/>
+    <path d="m428 144 36-22"/>
+    <path d="M436 177h40"/>
+  </g>
+
+  <g fill="none" stroke="#FB7299" stroke-width="34" stroke-linecap="round">
+    <path d="m194 158-52-76"/>
+    <path d="m318 158 52-76"/>
+  </g>
+
+  <rect x="116" y="392" width="42" height="58" rx="18" fill="#FB7299"/>
+  <rect x="354" y="392" width="42" height="58" rx="18" fill="#FB7299"/>
+  <rect x="80" y="145" width="352" height="273" rx="78" fill="#FB7299" mask="url(#screen-cutout)"/>
+
+  <path d="M226 218a12 12 0 0 1 12-12h36a12 12 0 0 1 12 12v62h30a10 10 0 0 1 7 17l-60 60a10 10 0 0 1-14 0l-60-60a10 10 0 0 1 7-17h30z" fill="#FB7299" mask="url(#play-cutout)"/>
+
+  <circle cx="142" cy="378" r="16" fill="#20242C"/>
+  <circle cx="190" cy="378" r="16" fill="#20242C"/>
+  <g fill="#20242C">
+    <rect x="330" y="354" width="14" height="48" rx="7"/>
+    <rect x="356" y="354" width="14" height="48" rx="7"/>
+    <rect x="382" y="354" width="14" height="48" rx="7"/>
+  </g>
+</svg>

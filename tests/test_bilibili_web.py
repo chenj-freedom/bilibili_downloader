@@ -1,9 +1,11 @@
 import json
+import struct
 import subprocess
 import sys
 import threading
 import unittest
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 
@@ -196,6 +198,64 @@ class WebAssetLayoutTests(unittest.TestCase):
         self.assertIn('fetch("/api/tools")', script)
         self.assertIn("toolRecheckButton.addEventListener", script)
         self.assertIn("setTimeout(hideToolTip, 3000)", script)
+
+
+class LogoAssetTests(unittest.TestCase):
+    def test_banner_is_readme_sized_and_compressed(self):
+        banner_path = Path("web/banner.png")
+
+        self.assertTrue(banner_path.is_file())
+        banner = banner_path.read_bytes()
+        self.assertEqual(banner[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(struct.unpack(">II", banner[16:24]), (1800, 600))
+        self.assertLessEqual(banner_path.stat().st_size, 400 * 1024)
+
+    def test_logo_png_is_compressed_and_keeps_transparency(self):
+        logo_path = Path("web/logo.png")
+        logo = logo_path.read_bytes()
+
+        self.assertEqual(struct.unpack(">II", logo[16:24]), (512, 512))
+        self.assertLessEqual(logo_path.stat().st_size, 20 * 1024)
+        self.assertIn(b"tRNS", logo)
+
+    def test_logo_assets_exist_and_have_expected_formats(self):
+        web_root = Path("web")
+        svg_path = web_root / "logo.svg"
+        png_path = web_root / "logo.png"
+        ico_path = web_root / "favicon.ico"
+
+        self.assertTrue(svg_path.is_file())
+        root = ET.fromstring(svg_path.read_text(encoding="utf-8"))
+        self.assertEqual(root.attrib["viewBox"], "0 0 512 512")
+        svg = svg_path.read_text(encoding="utf-8")
+        self.assertIn("#FB7299", svg)
+        self.assertIn("#00C4D9", svg)
+
+        png = png_path.read_bytes()
+        self.assertEqual(png[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(struct.unpack(">II", png[16:24]), (512, 512))
+
+        ico = ico_path.read_bytes()
+        self.assertEqual(ico[:4], b"\x00\x00\x01\x00")
+        self.assertGreaterEqual(int.from_bytes(ico[4:6], "little"), 4)
+
+    def test_web_ui_references_logo_and_favicon(self):
+        html = Path("web/index.html").read_text(encoding="utf-8")
+
+        self.assertIn('href="/favicon.ico"', html)
+        self.assertIn('src="/logo.svg"', html)
+        self.assertIn('class="brand-logo"', html)
+
+    def test_readmes_display_the_banner_and_project_badges(self):
+        for path in (Path("README.md"), Path("README.en.md")):
+            content = path.read_text(encoding="utf-8")
+            self.assertIn('src="web/banner.png"', content)
+            self.assertIn('alt="Bilibili Downloader banner"', content)
+            self.assertIn("style=for-the-badge", content)
+            self.assertIn("github/stars/chenj-freedom/bilibili_downloader", content)
+            self.assertIn("github/last-commit/chenj-freedom/bilibili_downloader", content)
+            self.assertIn("Python-3-", content)
+            self.assertIn("FFmpeg-required-", content)
 
 
 class SubprocessEnvironmentTests(unittest.TestCase):

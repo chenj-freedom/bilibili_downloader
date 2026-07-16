@@ -1,8 +1,20 @@
 # Bilibili Downloader
 
-[简体中文](README.md) | English
+<p align="center">
+  <img src="web/banner.png" width="100%" alt="Bilibili Downloader banner">
+</p>
 
-A Bilibili downloader script. It currently supports audio and video downloads.
+<p align="center">
+  <a href="https://github.com/chenj-freedom/bilibili_downloader/stargazers"><img src="https://img.shields.io/github/stars/chenj-freedom/bilibili_downloader?style=for-the-badge&logo=github&color=FB7299" alt="GitHub stars"></a>
+  <a href="https://github.com/chenj-freedom/bilibili_downloader/commits/main"><img src="https://img.shields.io/github/last-commit/chenj-freedom/bilibili_downloader?style=for-the-badge&logo=github&color=00C4D9" alt="Last commit"></a>
+  <img src="https://img.shields.io/badge/Python-3-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3">
+  <img src="https://img.shields.io/badge/FFmpeg-required-007808?style=for-the-badge&logo=ffmpeg&logoColor=white" alt="FFmpeg required">
+  <img src="https://img.shields.io/badge/Windows%20%7C%20macOS-supported-20242C?style=for-the-badge" alt="Windows and macOS">
+</p>
+
+<p align="center"><a href="README.md">简体中文</a> · English</p>
+
+<p align="center">Download Bilibili audio, video, multi-part videos, and collections from the CLI or local Web UI.</p>
 
 ## Features
 

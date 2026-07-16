@@ -1,4 +1,5 @@
 import argparse
+import codecs
 import json
 import mimetypes
 import os
@@ -393,6 +394,17 @@ def stop_job(job_id):
     return job_id
 
 
+def append_job_output_line(job_id, clean_line):
+    event = parse_downloader_event(clean_line)
+    if event is not None:
+        apply_job_event(job_id, event)
+        progress_line = format_progress_event_log(event)
+        if progress_line is not None:
+            append_job_log_only(job_id, progress_line)
+        return
+    append_job_log(job_id, clean_line)
+
+
 def run_job(job_id, command):
     append_job_log(job_id, f"Running: {' '.join(command)}")
     try:
@@ -402,10 +414,7 @@ def run_job(job_id, command):
             env=build_subprocess_env(),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
+            bufsize=0,
         )
     except OSError as exc:
         append_job_log(job_id, f"Failed to start downloader: {exc}")
@@ -414,20 +423,28 @@ def run_job(job_id, command):
     set_job_process(job_id, process)
 
     assert process.stdout is not None
+    pending_output = ""
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+
+    def consume_output(text):
+        nonlocal pending_output
+        for character in text:
+            if character not in "\r\n":
+                pending_output += character
+                continue
+            if pending_output:
+                append_job_output_line(job_id, pending_output)
+                pending_output = ""
+
     try:
         while True:
-            chunk = process.stdout.readline()
-            if chunk == "":
+            data = process.stdout.read(1)
+            if data == b"":
+                consume_output(decoder.decode(b"", final=True))
                 break
-            for clean_line in split_output_lines(chunk):
-                event = parse_downloader_event(clean_line)
-                if event is not None:
-                    apply_job_event(job_id, event)
-                    progress_line = format_progress_event_log(event)
-                    if progress_line is not None:
-                        append_job_log_only(job_id, progress_line)
-                    continue
-                append_job_log(job_id, clean_line)
+            consume_output(decoder.decode(data))
+        if pending_output:
+            append_job_output_line(job_id, pending_output)
     finally:
         process.stdout.close()
 
