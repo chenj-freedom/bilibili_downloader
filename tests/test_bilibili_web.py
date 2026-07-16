@@ -252,10 +252,19 @@ class LogoAssetTests(unittest.TestCase):
             self.assertIn('src="web/banner.png"', content)
             self.assertIn('alt="Bilibili Downloader banner"', content)
             self.assertIn("style=for-the-badge", content)
-            self.assertIn("github/stars/chenj-freedom/bilibili_downloader", content)
+            self.assertNotIn("github/stars/chenj-freedom/bilibili_downloader", content)
+            self.assertIn("badge/License-MIT-", content)
+            self.assertIn('href="LICENSE"', content)
             self.assertIn("github/last-commit/chenj-freedom/bilibili_downloader", content)
             self.assertIn("Python-3-", content)
             self.assertIn("FFmpeg-required-", content)
+
+    def test_repository_includes_mit_license(self):
+        license_text = Path("LICENSE").read_text(encoding="utf-8")
+
+        self.assertIn("MIT License", license_text)
+        self.assertIn("Copyright (c) 2026 bilibili_downloader contributors", license_text)
+        self.assertIn("THE SOFTWARE IS PROVIDED \"AS IS\"", license_text)
 
 
 class SubprocessEnvironmentTests(unittest.TestCase):
